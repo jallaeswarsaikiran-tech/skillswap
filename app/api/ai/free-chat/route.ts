@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import natural from 'natural';
 import Sentiment from 'sentiment';
 
+// Force this route to run on the Node.js runtime (not Edge)
+export const runtime = 'nodejs';
+
 class FreeAIEngine {
   private sentiment: any;
   private stemmer: typeof natural.PorterStemmer;
