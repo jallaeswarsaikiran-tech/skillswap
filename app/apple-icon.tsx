@@ -17,16 +17,16 @@ export default function Icon() {
           width: '100%',
           height: '100%',
           display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #f59e0b 100%)',
+          color: 'white',
+          fontSize: 96,
+          fontWeight: 800,
+          letterSpacing: '-0.04em',
         }}
       >
-        <img
-          src=""
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain',
-          }}
-        />
+        SS
       </div>
     ),
     {

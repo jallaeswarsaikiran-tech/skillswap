@@ -34,6 +34,15 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  webpack: (config) => {
+    // 'natural' optionally requires 'webworker-threads' which is not available in serverless
+    config.resolve = config.resolve || {};
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      'webworker-threads': false,
+    };
+    return config;
+  },
 };
 
 export default nextConfig;
