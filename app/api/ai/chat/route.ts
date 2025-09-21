@@ -4,9 +4,12 @@ import OpenAI from 'openai';
 // Force this route to run on the Node.js runtime (not Edge)
 export const runtime = 'nodejs';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazily create the OpenAI client to avoid throwing during module import on build
+function getOpenAIClient() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  return new OpenAI({ apiKey: key });
+}
 
 // System prompt to make GPT understand SkillSwap context
 const SKILLSWAP_SYSTEM_PROMPT = `
@@ -49,7 +52,22 @@ export async function POST(req: Request) {
 
     const enhancedPrompt = buildContextualPrompt(message, userContext, conversationHistory);
 
-    const completion = await openai.chat.completions.create({
+    const client = getOpenAIClient();
+    if (!client) {
+      // Graceful fallback when no API key is configured
+      const fallback = getFallbackResponse(message);
+      return NextResponse.json(
+        {
+          success: true,
+          response: { text: fallback, quickActions: ['profile_help', 'video_help', 'credits_help'] },
+          usage: null,
+          note: 'OPENAI_API_KEY not set; returned fallback response.',
+        },
+        { status: 200 }
+      );
+    }
+
+    const completion = await client.chat.completions.create({
       model: 'gpt-4',
       messages: [
         { role: 'system', content: SKILLSWAP_SYSTEM_PROMPT },
