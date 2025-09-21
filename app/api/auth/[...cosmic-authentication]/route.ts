@@ -1,6 +1,17 @@
-import { createAuthHandler } from 'cosmic-authentication';
+import { NextResponse } from 'next/server';
 
-const handler = createAuthHandler();
+export const runtime = 'nodejs';
 
-export const GET = handler.GET;
-export const POST = handler.POST;
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Auth route is disabled (not implemented).' },
+    { status: 501 }
+  );
+}
+
+export async function POST() {
+  return NextResponse.json(
+    { error: 'Auth route is disabled (not implemented).' },
+    { status: 501 }
+  );
+}
