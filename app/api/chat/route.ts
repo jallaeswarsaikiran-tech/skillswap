@@ -34,11 +34,11 @@ export async function GET(request: Request) {
 
     // Get messages for this session
     const { data: messages, error: messagesError } = await supabase
-      .from('messages')
+      .from('chat_messages')
       .select('*')
       .eq('session_id', sessionId)
-      .order('timestamp', { ascending: true })
-      .limit(100);
+      .order('created_at', { ascending: true })
+      .limit(200);
 
     if (messagesError) {
       console.error('Error fetching messages:', messagesError);
@@ -54,61 +54,59 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const user = await getServerSession();
-    if (!user) {
+    const supabase = getSupabaseServer();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
     const data = await request.json();
-    const { sessionId, message, messageType = 'text' } = data;
-    // FIRST_EDIT_START: allow optional file metadata
-    const { fileName } = data as { fileName?: string };
-    // FIRST_EDIT_END
+    const { sessionId, messageText, messageType = 'text', fileUrl } = data as {
+      sessionId?: string;
+      messageText?: string;
+      messageType?: 'text' | 'file' | 'image';
+      fileUrl?: string;
+    };
 
-    if (!sessionId || !message) {
+    if (!sessionId || !(messageText || fileUrl)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
     // Verify user is participant in the session
-    const sessionDoc = await db.collection('sessions').doc(sessionId).get();
-    if (!sessionDoc.exists) {
+    const { data: session, error: sessionError } = await supabase
+      .from('sessions')
+      .select('teacher_id, learner_id')
+      .eq('id', sessionId)
+      .single();
+    if (sessionError || !session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    const session = sessionDoc.data();
-    if (!session?.participants?.includes(user.uid)) {
+    if (session.teacher_id !== user.id && session.learner_id !== user.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
     const messageData = {
-      sessionId,
-      senderId: user.uid,
-      senderName: user.displayName || 'Anonymous',
-      message,
-      messageType,
-      // FIRST_EDIT_START: store fileName when applicable
-      ...(fileName ? { fileName } : {}),
-      // FIRST_EDIT_END
-      timestamp: db.FieldValue.serverTimestamp(),
-      createdAt: db.FieldValue.serverTimestamp(),
-      updatedAt: db.FieldValue.serverTimestamp()
-    };
+      session_id: sessionId,
+      sender_id: user.id,
+      message_text: messageText || '',
+      message_type: messageType,
+      file_url: fileUrl || null,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    } as const;
 
-    const docRef = await db.collection('messages').add(messageData);
+    const { data: inserted, error: insertError } = await supabase
+      .from('chat_messages')
+      .insert(messageData)
+      .select()
+      .single();
+    if (insertError) {
+      console.error('Insert chat message error:', insertError);
+      return NextResponse.json({ error: 'Failed to send message' }, { status: 500 });
+    }
 
-    // Update session with last message info
-    await db.collection('sessions').doc(sessionId).update({
-      lastMessage: message,
-      lastMessageAt: db.FieldValue.serverTimestamp(),
-      lastMessageBy: user.uid,
-      updatedAt: db.FieldValue.serverTimestamp()
-    });
-
-    return NextResponse.json({ 
-      success: true, 
-      messageId: docRef.id,
-      message: { id: docRef.id, ...messageData }
-    });
+    return NextResponse.json({ success: true, message: inserted });
   } catch (error) {
     console.error('Error sending message:', error);
     return NextResponse.json({ error: 'Failed to send message' }, { status: 500 });

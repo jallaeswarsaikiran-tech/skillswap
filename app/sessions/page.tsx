@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useAuth } from 'cosmic-authentication';
+import { useAuth } from '@/lib/supabaseAuthProvider';
 import { motion } from 'framer-motion';
 import { Icon } from '@iconify/react';
 import Link from 'next/link';
@@ -289,7 +289,7 @@ export default function Sessions() {
           {filteredSessions.length > 0 ? (
             <div className="space-y-4">
               {filteredSessions.map((session, index) => {
-                const isTeacher = session.teacherId === user?.uid;
+                const isTeacher = session.teacherId === user?.id;
                 const partnerName = isTeacher ? session.learnerName : session.teacherName;
                 
                 return (

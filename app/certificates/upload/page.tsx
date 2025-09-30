@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useAuth } from 'cosmic-authentication';
+import { useAuth } from '@/lib/supabaseAuthProvider';
 import Link from 'next/link';
 import { Icon } from '@iconify/react';
 
@@ -14,7 +14,7 @@ interface SessionItem {
 }
 
 function UploadContent() {
-  const { user, signIn } = useAuth();
+  const { user } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -30,7 +30,7 @@ function UploadContent() {
         setLoading(true);
         const res = await fetch('/api/sessions');
         const json = await res.json();
-        const taught = (json.sessions || []).filter((s: SessionItem) => s.teacherId === user?.uid && s.status === 'completed');
+        const taught = (json.sessions || []).filter((s: SessionItem) => s.teacherId === user?.id && s.status === 'completed');
         setSessions(taught);
         if (taught.length > 0) setSelectedSessionId(taught[0].id);
       } catch {
@@ -44,8 +44,7 @@ function UploadContent() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      signIn();
+      window.location.href = '/auth/login';
       return;
     }
     if (!file || !selectedSessionId) return;

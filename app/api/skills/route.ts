@@ -58,37 +58,62 @@ export async function POST(request: Request) {
     }
 
     const data = await request.json();
-    const { title, description, category, type, duration, price, liveLink, notes, demoLink } = data;
-    const { examLink, teacherCertificateFileId, teacherCertificateFileUrl } = data as {
-      examLink?: string;
-      teacherCertificateFileId?: string;
-      teacherCertificateFileUrl?: string;
+    const { title, description, category, type, price } = data as { title: string; description: string; category: string; type: 'teaching' | 'learning'; price: number };
+    const { difficulty_level, duration_hours, max_students, exam_required } = data as {
+      difficulty_level?: string;
+      duration_hours?: number;
+      max_students?: number;
+      exam_required?: boolean;
     };
 
-    if (!title || !description || !category || !type) {
+    if (!title || !description || !category || !type || typeof price !== 'number') {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // If posting a teaching skill, enforce premium plan, teacher status, and badge for subject/category
+    if (type === 'teaching') {
+      const { data: userRow, error: userErr } = await supabase
+        .from('users')
+        .select('plan_type, is_teacher')
+        .eq('id', user.id)
+        .single();
+      if (userErr || !userRow) {
+        return NextResponse.json({ error: 'Unable to verify user' }, { status: 500 });
+      }
+      if (userRow.plan_type !== 'premium') {
+        return NextResponse.json({ error: 'Premium plan required to post teaching skills' }, { status: 403 });
+      }
+      if (!userRow.is_teacher) {
+        return NextResponse.json({ error: 'Teacher access required. Submit verification first.' }, { status: 403 });
+      }
+      // Check subject badge using category as subject proxy
+      const { data: badgesRes, error: badgeErr } = await supabase
+        .from('teacher_badges')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('subject', category)
+        .eq('valid', true)
+        .limit(1);
+      if (badgeErr || !badgesRes || badgesRes.length === 0) {
+        return NextResponse.json({ error: 'No valid teacher badge for this subject/category' }, { status: 403 });
+      }
+    }
+
     const skillData = {
+      user_id: user.id,
       title,
       description,
       category,
       type, // 'teaching' or 'learning'
-      duration: duration || 60,
-      price: typeof price === 'number' ? price : 0,
-      live_link: liveLink || '',
-      notes: notes || '',
-      demo_link: demoLink || '',
-      exam_link: examLink || '',
-      teacher_certificate_file_id: teacherCertificateFileId || '',
-      teacher_certificate_file_url: teacherCertificateFileUrl || '',
-      user_id: user.id,
-      user_name: user.user_metadata?.display_name || 'Anonymous',
-      user_email: user.email,
-      status: 'active',
-      rating_count: 0,
-      rating_sum: 0,
-    };
+      price,
+      difficulty_level: difficulty_level || 'beginner',
+      duration_hours: typeof duration_hours === 'number' ? duration_hours : 1,
+      max_students: typeof max_students === 'number' ? max_students : 10,
+      current_students: 0,
+      rating: 0,
+      total_reviews: 0,
+      exam_required: !!exam_required,
+    } as const;
 
     const { data: newSkill, error: insertError } = await supabase
       .from('skills')
@@ -123,11 +148,9 @@ export async function PUT(request: Request) {
     }
 
     const data = await request.json();
-    const { skillId, examLink, teacherCertificateFileId, teacherCertificateFileUrl } = data as {
-      skillId?: string;
-      examLink?: string;
-      teacherCertificateFileId?: string;
-      teacherCertificateFileUrl?: string;
+    const { skillId } = data as { skillId?: string };
+    const { difficulty_level, duration_hours, max_students, exam_required, price, description } = data as {
+      difficulty_level?: string; duration_hours?: number; max_students?: number; exam_required?: boolean; price?: number; description?: string;
     };
 
     if (!skillId) {
@@ -150,9 +173,12 @@ export async function PUT(request: Request) {
     }
 
     const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (typeof examLink === 'string') updatePayload.exam_link = examLink;
-    if (typeof teacherCertificateFileId === 'string') updatePayload.teacher_certificate_file_id = teacherCertificateFileId;
-    if (typeof teacherCertificateFileUrl === 'string') updatePayload.teacher_certificate_file_url = teacherCertificateFileUrl;
+    if (typeof difficulty_level === 'string') updatePayload.difficulty_level = difficulty_level;
+    if (typeof duration_hours === 'number') updatePayload.duration_hours = duration_hours;
+    if (typeof max_students === 'number') updatePayload.max_students = max_students;
+    if (typeof exam_required === 'boolean') updatePayload.exam_required = exam_required;
+    if (typeof price === 'number') updatePayload.price = price;
+    if (typeof description === 'string') updatePayload.description = description;
 
     const { error: updateError } = await supabase
       .from('skills')

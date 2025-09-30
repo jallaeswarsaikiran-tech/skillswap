@@ -84,19 +84,21 @@ export async function POST(request: Request) {
       }
     }
 
+    // Determine duration in minutes based on skill.duration_hours or default 60
+    const durationMinutes = typeof (skill as any).duration_hours === 'number' && (skill as any).duration_hours > 0
+      ? Math.round((skill as any).duration_hours * 60)
+      : (typeof duration === 'number' && duration > 0 ? duration : 60);
+
     const sessionData = {
       skill_id: skillId,
       skill_title: skill.title || '',
       teacher_id: teacherId,
       learner_id: user.id,
-      teacher_name: skill.user_name || '',
-      learner_name: user.user_metadata?.display_name || 'Anonymous',
       learner_message: learnerMessage || '',
       status: 'pending', // pending, accepted, declined, completed, cancelled
       scheduled_for: scheduledDate?.toISOString() || null,
-      participants: [teacherId, user.id],
-      price: 0, // free chatting and accepting requests
-      duration: typeof duration === 'number' && duration > 0 ? duration : (skill.duration || 60),
+      price: 0,
+      duration: durationMinutes,
     };
 
     const { data: newSession, error: insertError } = await supabase
@@ -123,10 +125,9 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const user = await getServerSession();
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+    const supabase = getSupabaseServer();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
     let data: unknown;
     try {
@@ -152,75 +153,34 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'Missing required fields: sessionId, action' }, { status: 400 });
     }
 
-    const sessionRef = db.collection('sessions').doc(sessionId);
-    const sessionDoc = await sessionRef.get();
+    // Load session
+    const { data: sess, error: sErr } = await supabase
+      .from('sessions')
+      .select('id, teacher_id, learner_id')
+      .eq('id', sessionId)
+      .single();
+    if (sErr || !sess) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
 
-    if (!sessionDoc.exists) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-    }
+    // Verify participant
+    const isTeacher = sess.teacher_id === user.id;
+    const isLearner = sess.learner_id === user.id;
+    if (!isTeacher && !isLearner) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
-    const session = sessionDoc.data() as {
-      teacherId?: string;
-      learnerId?: string;
-      participants?: string[];
-      price?: number;
-      skillTitle?: string;
-      teacherName?: string;
-    } | undefined;
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
-    // Verify user is participant
-    if (!session?.participants?.includes(user.uid)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
-    }
-
-    if (action === 'accept' && session?.teacherId === user.uid) {
-      await sessionRef.update({
-        status: 'accepted',
-        acceptedAt: db.FieldValue.serverTimestamp(),
-        updatedAt: db.FieldValue.serverTimestamp(),
-      });
-
-      // No credit deductions
-    } else if (action === 'decline' && session?.teacherId === user.uid) {
-      await sessionRef.update({
-        status: 'declined',
-        declinedAt: db.FieldValue.serverTimestamp(),
-        updatedAt: db.FieldValue.serverTimestamp(),
-      });
-    } else if (action === 'complete' && session?.teacherId === user.uid) {
-      await sessionRef.update({
-        status: 'completed',
-        completedAt: db.FieldValue.serverTimestamp(),
-        completionData: completionData || {},
-        updatedAt: db.FieldValue.serverTimestamp(),
-      });
-
-      // Update simple stats without credits movement
-      await db.collection('users').doc(session.teacherId as string).update({
-        skillsTaught: db.FieldValue.increment(1),
-        totalSessions: db.FieldValue.increment(1),
-        updatedAt: db.FieldValue.serverTimestamp(),
-      });
-      await db.collection('users').doc(session.learnerId as string).update({
-        skillsLearned: db.FieldValue.increment(1),
-        totalSessions: db.FieldValue.increment(1),
-        updatedAt: db.FieldValue.serverTimestamp(),
-      });
-
-      // Create certificate if completion data provided
-      if ((completionData as { certificateEligible?: boolean } | undefined)?.certificateEligible) {
-        await db.collection('certificates').add({
-          userId: session.learnerId,
-          skillTitle: session.skillTitle,
-          teacherId: session.teacherId,
-          teacherName: session.teacherName,
-          sessionId,
-          completedAt: db.FieldValue.serverTimestamp(),
-          certificateData: completionData,
-          createdAt: db.FieldValue.serverTimestamp(),
-          updatedAt: db.FieldValue.serverTimestamp(),
-        });
-      }
+    if (action === 'accept') {
+      if (!isTeacher) return NextResponse.json({ error: 'Only teacher can accept' }, { status: 403 });
+      updates.status = 'accepted';
+      updates.accepted_at = new Date().toISOString();
+    } else if (action === 'decline') {
+      if (!isTeacher) return NextResponse.json({ error: 'Only teacher can decline' }, { status: 403 });
+      updates.status = 'declined';
+      updates.declined_at = new Date().toISOString();
+    } else if (action === 'complete') {
+      if (!isTeacher) return NextResponse.json({ error: 'Only teacher can complete' }, { status: 403 });
+      updates.status = 'completed';
+      updates.completed_at = new Date().toISOString();
+      // Stats can be updated asynchronously in a cron/job; for now we keep it simple
     } else if (action === 'schedule') {
       // Either participant can schedule/reschedule
       let scheduledDate: Date | null = null;
@@ -228,18 +188,18 @@ export async function PUT(request: Request) {
         const parsed = new Date(scheduledFor as unknown as string);
         if (!isNaN(parsed.getTime())) scheduledDate = parsed;
       }
-      const durationValue = typeof duration === 'number' && duration > 0 ? duration : undefined;
-
-      const updatePayload: Record<string, unknown> = {
-        updatedAt: db.FieldValue.serverTimestamp(),
-      };
-      if (scheduledDate) updatePayload.scheduledFor = scheduledDate;
-      if (durationValue) updatePayload.duration = durationValue;
-
-      await sessionRef.update(updatePayload);
+      if (scheduledDate) updates.scheduled_for = scheduledDate.toISOString();
+      if (typeof duration === 'number' && duration > 0) updates.duration = duration;
+      updates.status = 'scheduled';
     } else {
-      return NextResponse.json({ error: 'Invalid action or unauthorized' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
+
+    const { error: uErr } = await supabase
+      .from('sessions')
+      .update(updates)
+      .eq('id', sessionId);
+    if (uErr) return NextResponse.json({ error: 'Failed to update session' }, { status: 500 });
 
     return NextResponse.json({ success: true });
   } catch (error) {

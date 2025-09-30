@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Brain, Heart } from 'lucide-react';
+import { X, Send, Brain, Heart } from 'lucide-react';
 
 // Message type definition to allow optional bot-only fields
 type Message = {
@@ -144,11 +144,7 @@ const FreeAISkillSwapBot = () => {
     }
   };
 
-  const getConfidenceColor = (confidence) => {
-    if (confidence > 0.8) return 'text-green-600';
-    if (confidence > 0.6) return 'text-yellow-600';
-    return 'text-red-600';
-  };
+  // Removed unused getConfidenceColor helper
 
   return (
     <div className="fixed bottom-6 right-6 z-50">
